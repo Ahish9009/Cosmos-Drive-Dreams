@@ -51,13 +51,13 @@ This python script will launch a [viser](https://github.com/nerfstudio-project/v
 
 
 ## Rendering Input Control Videos for Cosmos
-You can use `render_from_rds_hq.py` to render the HD map + bounding box / LiDAR condition videos from RDS-HQ dataset. GPU is required for rendering LiDAR.
+You can use `render_from_rds_hq.py` to render the HD map + bounding box / LiDAR / World Scenario condition videos from RDS-HQ dataset. GPU is required for rendering LiDAR and World Scenario.
 ```bash
 usage: render_from_rds_hq.py [-h] -i INPUT_ROOT -o OUTPUT_ROOT
                             [-cj CLIP_ID_JSON] 
                             [-d {rds_hq,rds_hd_mv,waymo,waymo_mv}]
                             [-c {pinhole,ftheta}] 
-                            [-s hdmap] [-s lidar]
+                            [-s hdmap] [-s lidar] [-s world_scenario]
                             [-p] 
                             [-np NOVEL_POSE_FOLDER]
 
@@ -91,6 +91,9 @@ optional arguments:
   -s lidar, --skip lidar
                         Skip LiDAR rendering
   
+  -s world_scenario, --skip world_scenario
+                        Skip World Scenario rendering
+  
   -p POST_TRAINING, --post_training POST_TRAINING
                         Also generate RGB video clip for post-training
                         Default: False
@@ -100,12 +103,31 @@ optional arguments:
                         If None, we will use the default pose in `pose` folder.
                         Default: None
 ```
-This will automatically launch multiple jobs based on [Ray](https://docs.ray.io/en/releases-2.4.0/index.html). If you want to use single process (e.g. for debugging), you can set `USE_RAY=False` in `render_from_rds_hq.py`. You can add `--skip hdmap` or `--skip lidar` to skip the rendering of HD map and LiDAR, respectively. 
+This will automatically launch multiple jobs based on [Ray](https://docs.ray.io/en/releases-2.4.0/index.html). If you want to use single process (e.g. for debugging), you can set `USE_RAY=False` in `render_from_rds_hq.py`. You can add `--skip hdmap`, `--skip lidar`, or `--skip world_scenario` to skip the rendering of HD map, LiDAR, or World Scenario respectively.
+
+### World Scenario Rendering (New in Cosmos-Transfer2.5-2B/auto/multiview)
+World Scenario rendering is an improved version of the HDMap condition, introduced in Cosmos-Transfer 2.5. Compared to traditional HDMap rendering, it offers several enhancements:
+
+**Key Differences from HDMap:**
+- GPU-enabled rendering with moderngl
+- Accurate 3D occlusion and heading for bbox rendering
+- Fine-grained laneline style rendering with different patterns (solid, dashed, dotted) 
+
 
 **RDS-HQ Rendering Results**
 <div align="center">
   <img src="../assets/rds_hq_render.png" alt="RDS-HQ Rendering Results" width="800" />
+
+  HDMap Rendering & LiDAR Depth Rendering
 </div>
+
+<div align="center">
+  <img src="../assets/rds_hq_render_world_scenario.png" alt="RDS-HQ World Scenario Rendering Results" width="800" />
+  
+  HDMap Rendering v.s. World Scenario Rendering
+</div>
+
+
 
 > [!NOTE]
 > If you're interested, we offer [documentation](../assets/ftheta.pdf) that explains the NVIDIA f-theta camera in detail.
@@ -115,6 +137,12 @@ The output folder structure will be like this. Note that `videos` will only be g
 ```bash
 <OUTPUT_FOLDER>
 ├── hdmap
+│   └── {camera_type}_{camera_name}
+│       ├── <CLIP_ID>_0.mp4
+│       ├── <CLIP_ID>_1.mp4
+│       └── ...
+│
+├── world_scenario
 │   └── {camera_type}_{camera_name}
 │       ├── <CLIP_ID>_0.mp4
 │       ├── <CLIP_ID>_1.mp4

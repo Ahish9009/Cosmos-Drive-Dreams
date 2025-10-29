@@ -13,6 +13,7 @@ We open-source our **model weights**, **pipeline toolkits**, and a **dataset** (
 <video controls autoplay loop src=https://github.com/user-attachments/assets/af926ed2-6f93-4e9d-8afe-95095792e8d8></video>
 
 ## News
+- 2025-10-29: **World Scenario Rendering** feature added to toolkits! This enhanced rendering mode (introduced in Cosmos-Transfer 2.5) provides high-fidelity 3D geometry-based control signals with rich laneline patterns, depth gradients, and improved visual quality compared to traditional HDMap rendering. See [toolkits README](cosmos-drive-dreams-toolkits/README.md#world-scenario-rendering-new-in-cosmos-transfer25-2bauto) for details.
 - 2025-10-22: [Data preprocessing](cosmos-drive-dreams-toolkits/convert_lidar_pointcloud_to_rangemap.py), post-training and inference scripts of lidar tokenizer and diffuison [models](cosmos-transfer-lidargen/README.md) are released ! See [Huggingface](https://huggingface.co/collections/nvidia/cosmos-drive-dreams-68f5ea17febabd25282767fd) for our model cards. 
 - 2025-06-10: Model, Toolkits, and Dataset (including cosmos-generated video, HDMap, and LiDAR) are released! Stay tuned for the paired GT RGB videos. 
 
@@ -106,15 +107,18 @@ For large-scale sampling, please download the above Cosmos-Drive-Dreams Dataset.
 We recommend using conda for managing your environment. Detailed instructions for setting up Cosmos-Drive-Dreams can be found in [INSTALL.md](INSTALL.md).
 
 ### 1. Preprocessing Condition Videos
-`cosmos-drive-dreams-toolkits/render_from_rds_hq.py` is used to render the HD map + bounding box / LiDAR condition videos from RDS-HQ dataset. 
-In this example, we will only be rendering the HD map + bounding box condition videos.
-Note that GPU is required for rendering LiDAR. 
+`cosmos-drive-dreams-toolkits/render_from_rds_hq.py` is used to render condition videos from RDS-HQ dataset. It supports three rendering modes:
+- **HDMap**: Traditional 2D projection-based HD map + bounding box rendering (CPU-only), used in Cosmos-Transfer1-7B-Sample-AV
+- **LiDAR**: LiDAR depth rendering (requires GPU), used in Cosmos-Transfer1-7B-Sample-AV
+- **World Scenario**: Enhanced 3D geometry-based rendering with rich visual details (requires GPU), used in Cosmos-Transfer2.5-2B/auto/multiview
+
+In this example, we will only render the HD map + bounding box condition videos.
 ```bash
 cd cosmos-drive-dreams-toolkits
 
 # generate multi-view condition videos.
 # If you just want to generate front-view videos, replace `-d rds_hq_mv` with `-d rds_hq`
-python render_from_rds_hq.py -i ../assets/example -o ../outputs -d rds_hq_mv --skip lidar
+python render_from_rds_hq.py -i ../assets/example -o ../outputs -d rds_hq_mv --skip lidar --skip world_scenario
 cd ..
 ```
 This will automatically launch multiple jobs based on [Ray](https://docs.ray.io/en/releases-2.4.0/index.html) for data parallelization, but since we are only processing 1 clip here, it will only use 1 worker. The script should return in under a minute and produce a new directory at `outputs/hdmap`:

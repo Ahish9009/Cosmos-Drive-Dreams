@@ -14,6 +14,9 @@ import torch.nn.functional as F
 import time
 from typing import Optional, Tuple
 from scipy.optimize import curve_fit
+from scipy.spatial import KDTree
+from shapely.geometry import Polygon
+from shapely import constrained_delaunay_triangles
 
 def interpolate_polyline_to_points(polyline, segment_interval=0.025):
     """
@@ -23,41 +26,60 @@ def interpolate_polyline_to_points(polyline, segment_interval=0.025):
     Returns:
         points: numpy array, shape (interpolate_num*N, 3)
     """
-    def interpolate_points(previous_vertex, vertex):
-        """
-        Args:
-            previous_vertex: (x, y, z)
-            vertex: (x, y, z)
-
-        Returns:
-            points: numpy array, shape (interpolate_num, 3)
-        """
-        interpolate_num = int(np.linalg.norm(np.array(vertex) - np.array(previous_vertex)) / segment_interval)
-        interpolate_num = max(interpolate_num, 2)
-        
-        # interpolate between previous_vertex and vertex
-        x = np.linspace(previous_vertex[0], vertex[0], num=interpolate_num)
-        y = np.linspace(previous_vertex[1], vertex[1], num=interpolate_num)
-        z = np.linspace(previous_vertex[2], vertex[2], num=interpolate_num)
-
-        # remove the last point, we will include it in the next interpolation
-        return np.stack([x, y, z], axis=1)[:-1] 
-
-    points = []
-    previous_vertex = None
-    for idx, vertex in enumerate(polyline):
-        if idx == 0:
-            previous_vertex = vertex
-            continue
+    polyline = np.asarray(polyline, dtype=float)
+    
+    if len(polyline) < 2:
+        return polyline.copy()
+    
+    # Vectorized computation of all segments at once
+    start_points = polyline[:-1]  # shape (N-1, 3)
+    end_points = polyline[1:]     # shape (N-1, 3)
+    
+    # Calculate distances for all segments
+    segment_vectors = end_points - start_points  # shape (N-1, 3)
+    distances = np.linalg.norm(segment_vectors, axis=1)  # shape (N-1,)
+    
+    # Handle edge cases: very small distances or invalid values
+    valid_mask = np.isfinite(distances) & (distances >= 1e-10)
+    
+    # Calculate interpolation numbers for all segments
+    interpolate_nums = np.floor(distances / segment_interval).astype(int)
+    interpolate_nums = np.clip(interpolate_nums, 2, 10000)
+    
+    # For invalid segments, set interpolate_num to 1 (just start point)
+    interpolate_nums[~valid_mask] = 1
+    
+    # Calculate total number of output points
+    # Valid segments: (interpolate_num - 1) points each
+    # Invalid segments: 1 point each  
+    # Plus 1 final point
+    valid_points = np.sum((interpolate_nums - 1)[valid_mask])
+    invalid_points = np.sum(~valid_mask)  # Each invalid segment contributes 1 point
+    total_points = valid_points + invalid_points + 1
+    
+    # Pre-allocate result array
+    result = np.empty((total_points, 3), dtype=float)
+    
+    # Fill the result array efficiently
+    current_idx = 0
+    for i, num_points in enumerate(interpolate_nums):
+        if valid_mask[i]:
+            # Create interpolation parameters for this segment
+            # Use endpoint=True and remove last point
+            t = np.linspace(0, 1, num_points, endpoint=True)[:-1]
+            # Vectorized interpolation: start + t * (end - start)
+            segment_points = start_points[i] + t[:, np.newaxis] * segment_vectors[i]
         else:
-            points.extend(interpolate_points(previous_vertex, vertex))
-            previous_vertex = vertex
-
-    # add the last point
-    points.append(polyline[-1])
-
-    return np.array(points)
-
+            # For invalid segments, just use the start point
+            segment_points = start_points[i:i+1]
+            
+        result[current_idx:current_idx + len(segment_points)] = segment_points
+        current_idx += len(segment_points)
+    
+    # Add the final point
+    result[current_idx] = polyline[-1]
+    
+    return result
 
 def recursive_transform(polythings, transform):
     """
@@ -1057,3 +1079,191 @@ def eval_polynomial(xs: np.ndarray, coeffs: np.ndarray) -> np.ndarray:
         ret = ret * xs + coeff
 
     return ret
+
+def triangulate_polygon_3d(vertices3d):
+    """
+    Triangulate a 3D polygon using Shapely's constrained Delaunay triangulation
+    over the bird's-eye plane (x, y), preserving z-coordinates from original vertices.
+
+    Args:
+        vertices3d: np.ndarray, shape (N, 3), polygon vertices in world coordinates.
+                    If the polygon is closed (first vertex equals last), the last
+                    duplicate vertex will be removed for triangulation.
+
+    Returns:
+        np.ndarray, shape (M, 3, 3), triangulated faces in 3D (x,y,z)
+    """
+    # Input validation and conversion
+    verts = np.asarray(vertices3d, dtype=float)
+    
+    # Remove duplicate last vertex if polygon is closed
+    if verts.shape[0] >= 2 and np.allclose(verts[0], verts[-1]):
+        verts = verts[:-1]
+
+    if verts.shape[0] < 3:
+        return np.empty((0, 3, 3), dtype=float)
+
+    # Create and validate 2D polygon
+    polygon = Polygon(verts[:, :2])
+    if not polygon.is_valid:
+        polygon = polygon.buffer(0)
+
+    # Perform constrained Delaunay triangulation
+    triangles_collection = constrained_delaunay_triangles(polygon)
+    
+    # Extract triangle coordinates more efficiently
+    coords_list = _extract_triangle_coordinates(triangles_collection)
+    if not coords_list:
+        return np.empty((0, 3, 3), dtype=float)
+    
+    # Convert to array in one operation
+    all_coords = np.vstack(coords_list).reshape(-1, 3, 2)  # Shape: (num_triangles, 3, 2)
+    num_triangles = all_coords.shape[0]
+    
+    # Build KDTree once
+    kdtree = KDTree(verts[:, :2])
+    
+    # Process all coordinates with single query (get enough neighbors for both exact match and interpolation)
+    coords_flat = all_coords.reshape(-1, 2)  # Shape: (num_triangles * 3, 2)
+    max_k = min(6, len(verts))  # Get more neighbors to handle both cases efficiently
+    
+    distances, indices = kdtree.query(coords_flat, k=max_k)
+    if max_k == 1:
+        distances = distances.reshape(-1, 1)
+        indices = indices.reshape(-1, 1)
+    
+    # Pre-allocate and fill result array efficiently
+    triangles_3d = np.empty((num_triangles, 3, 3), dtype=float)
+    result_flat = triangles_3d.reshape(-1, 3)
+    
+    # Vectorized processing with single pass
+    _fill_triangle_vertices(result_flat, coords_flat, verts, distances, indices)
+    
+    return triangles_3d
+
+
+def _extract_triangle_coordinates(triangles_collection):
+    """Extract triangle coordinates efficiently from Shapely collection."""
+    coords_list = []
+    
+    if hasattr(triangles_collection, 'geoms') and triangles_collection.geoms is not None:
+        for geom in triangles_collection.geoms:
+            if geom.geom_type == 'Polygon':
+                coords = np.array(geom.exterior.coords[:-1])
+                if len(coords) == 3:
+                    coords_list.append(coords)
+    elif triangles_collection.geom_type == 'Polygon':
+        coords = np.array(triangles_collection.exterior.coords[:-1])
+        if len(coords) == 3:
+            coords_list.append(coords)
+    
+    return coords_list
+
+
+def _fill_triangle_vertices(result_flat, coords_flat, verts, distances, indices, tolerance=1e-10):
+    """Fill result array with vertices using vectorized operations."""
+    # Check for exact matches
+    exact_matches = distances[:, 0] < tolerance
+    
+    # For exact matches, use original vertices directly
+    if np.any(exact_matches):
+        exact_indices = indices[exact_matches, 0]
+        result_flat[exact_matches] = verts[exact_indices]
+    
+    # For points needing interpolation
+    interp_mask = ~exact_matches
+    if np.any(interp_mask):
+        # Use pre-computed distances and indices for interpolation
+        interp_distances = distances[interp_mask]
+        interp_indices = indices[interp_mask]
+        interp_coords = coords_flat[interp_mask]
+        
+        # Vectorized inverse distance weighting
+        safe_distances = np.maximum(interp_distances, 1e-10)
+        weights = 1.0 / safe_distances
+        weights = weights / weights.sum(axis=1, keepdims=True)
+        
+        # Compute interpolated z-coordinates
+        z_values = verts[interp_indices, 2]
+        interp_z = np.sum(weights * z_values, axis=1)
+        
+        # Assign interpolated coordinates
+        result_flat[interp_mask, :2] = interp_coords
+        result_flat[interp_mask, 2] = interp_z
+
+def filter_by_height_relative_to_ego(
+    geometry: np.ndarray, 
+    camera_model, 
+    camera_pose: np.ndarray, 
+    camera_pose_init: np.ndarray,
+    underpass_threshold: float = -3.0,
+    envelope_angle_deg: float = 3.0,
+    min_overlap_percentage: float = 0.8
+) -> bool:
+    """
+    Filter out map elements that are on underpasses based on height relative to ego.
+    Also filters based on overlap with a road surface envelope for horizontal elements.
+    
+    Args:
+        geometry: np.ndarray
+            Shape (N, 3). 3D points of the map element in world coordinates.
+        camera_model: CameraModel
+            Camera model (not used but kept for consistency).
+        camera_pose: np.ndarray
+            Shape (4, 4). Camera-to-world transformation matrix.
+        camera_pose_init: np.ndarray
+            Shape (4, 4). Camera-to-world transformation matrix at the start of the clip. 
+            This is the camera pose in ego space.
+        underpass_threshold: float
+            If maximum height is below this threshold, element is considered underpass.
+        envelope_angle_deg: float
+            Road surface envelope angle in degrees (±angle from horizontal).
+        min_overlap_percentage: float
+            Minimum percentage of points that must be within road surface envelope.
+    
+    Returns:
+        bool: True if the element should be filtered out (is overpass/underpass/outside envelope), False otherwise
+    """
+    if len(geometry) == 0:
+        return True  # Filter out empty geometry
+    
+    # Transform points from world coordinates to camera coordinates
+    world_to_camera = np.linalg.inv(camera_pose)
+    points_in_cam = camera_model.transform_points_np(geometry, world_to_camera)
+    points_in_ego_space = camera_model.transform_points_np(points_in_cam, camera_pose_init)
+    # In ego space: x (front), y (left), z (up)
+    
+    # Get height in ego space
+    heights_in_ego_space = points_in_ego_space[:, 2]
+    
+    # Check for underpass: if maximum height is above threshold
+    max_height = np.max(heights_in_ego_space)
+    if max_height > underpass_threshold:
+        # Not underpass
+        return False
+    
+    # Additional check: road surface envelope for horizontal elements (like wait lines)
+    # Check what percentage of points fall within the road surface envelope
+    if envelope_angle_deg > 0 and min_overlap_percentage > 0:
+        # Get distances (x, y) and heights (z) in ego space
+        distances = points_in_ego_space[:, :2]
+        heights = points_in_ego_space[:, 2]
+        distance_norm = np.linalg.norm(distances, axis=1)
+       
+        # Calculate the road surface envelope bounds for each point based on its forward distance
+        angle_rad = np.deg2rad(envelope_angle_deg)
+        tan_angle = np.tan(angle_rad)
+        
+        # Calculate the z-range that falls within the road surface envelope
+        # Lower bound: z = -distance * tan(angle)
+        envelope_lower = -distance_norm * tan_angle
+        
+        # Check which points fall within the envelope
+        within_envelope = (heights >= envelope_lower)
+        overlap_percentage = np.sum(within_envelope) / len(heights)
+        
+        # Filter out if overlap is below threshold
+        if overlap_percentage > min_overlap_percentage:
+            return False  # Keep the element
+    
+    return True  # Filter out due to insufficient overlap with road surface envelope
