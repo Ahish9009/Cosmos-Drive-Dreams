@@ -21,12 +21,21 @@ from pathlib import Path
 from termcolor import cprint, colored
 from pathlib import Path
 from utils.wds_utils import get_sample
-from utils.bbox_utils import create_bbox_projection, interpolate_bbox, fix_static_objects
-from utils.minimap_utils import create_minimap_projection, simplify_minimap
+from utils.bbox_utils import (
+    create_bbox_projection, interpolate_bbox, fix_static_objects, 
+    create_bbox_geometry_objects_for_frame, build_per_vertex_color_map_for_world_scenario,
+)
+from utils.minimap_utils import (
+    create_minimap_projection, simplify_minimap, prepare_minimap_data_for_world_scenario,
+    prepare_traffic_light_status_data, create_traffic_light_status_geometry_objects_from_data,
+    create_minimap_geometry_objects_from_data
+)
+from utils.laneline_utils import prepare_laneline_type_geometry_data, create_laneline_geometry_objects_from_data
 from utils.pcd_utils import batch_move_points_within_bboxes_sparse, forward_warp_multiframes_sparse_depth_only
 from utils.camera.pinhole import PinholeCamera
 from utils.camera.ftheta import FThetaCamera
 from utils.ray_utils import ray_remote, wait_for_futures
+from utils.graphics_utils import render_geometries
 
 USE_RAY = True
 
@@ -286,6 +295,132 @@ def render_sample_hdmap(
         )
 
 
+@ray_remote(use_ray=USE_RAY, num_gpus=0.25, num_cpus=2)
+def render_sample_world_scenario(
+    input_root: str,
+    output_root: str,
+    clip_id: str,
+    settings: dict,
+    camera_type: str,
+    post_training: bool = False,
+    novel_pose_folder: str = None,
+    resize_resolution: tuple[int, int] = (1280, 720),
+    cosmos_resolution: tuple[int, int] = (1280, 704)
+): 
+    """
+    world scenario is an improved version of hdmap condition. It is introduced in Cosmos-Transfer 2.5
+    """
+
+    minimap_types = settings['MINIMAP_TYPES']
+    # Remove laneline and traffic light from minimap types since they are rendered separately
+    minimap_types = [minimap_type for minimap_type in minimap_types if minimap_type not in ['lanelines', 'traffic_lights']]
+
+    camera_name_to_camera_poses, render_frame_ids, all_object_info, camera_name_to_camera_model = \
+        prepare_input(input_root, clip_id, settings, camera_type, post_training, resize_resolution, novel_pose_folder)
+
+    minimap_wds_files = [
+        os.path.join(input_root, f"3d_{minimap_type}", f"{clip_id}.tar") for minimap_type in minimap_types
+    ]
+
+    # Precompute bbox color map once per camera/clip
+    bbox_per_vertex_color_map = build_per_vertex_color_map_for_world_scenario()
+
+    for camera_name, camera_model in camera_name_to_camera_model.items():
+        pose_all_frames = camera_name_to_camera_poses[camera_name]
+
+        # Preload static data used across frames
+        minimap_name_to_minimap_data, minimap_to_rgb = prepare_minimap_data_for_world_scenario(minimap_wds_files)
+        processed_lanelines = prepare_laneline_type_geometry_data(
+            os.path.join(input_root, '3d_lanelines', f"{clip_id}.tar")
+        )
+        tl_position_list, tl_status_dict, tl_status_to_rgb = prepare_traffic_light_status_data(
+            os.path.join(input_root, '3d_traffic_lights', f"{clip_id}.tar"),
+            os.path.join(input_root, '3d_traffic_lights_status', f"{clip_id}.tar"),
+        )
+
+        # Camera pose at the start of the clip is assumed to be the camera pose in ego space.
+        camera_pose_init = pose_all_frames[0]
+        combined_frames = []
+        for frame_id in render_frame_ids:
+            camera_pose = pose_all_frames[frame_id]
+
+            # Build all geometry objects for this frame
+            geometry_objects = []
+
+            # minimap layers
+            geometry_objects.extend(
+                create_minimap_geometry_objects_from_data(
+                    minimap_name_to_minimap_data,
+                    camera_pose,
+                    camera_model,
+                    minimap_to_rgb,
+                    camera_pose_init=camera_pose_init,
+                )
+            )
+
+            # lanelines
+            geometry_objects.extend(
+                create_laneline_geometry_objects_from_data(
+                    processed_lanelines,
+                    camera_pose,
+                    camera_model,
+                    camera_pose_init=camera_pose_init,
+                )
+            )
+
+            # traffic lights
+            geometry_objects.extend(
+                create_traffic_light_status_geometry_objects_from_data(
+                    tl_position_list,
+                    tl_status_dict,
+                    frame_id,
+                    camera_pose,
+                    camera_model,
+                    tl_status_to_rgb,
+                )
+            )
+
+            # bounding boxes
+            geometry_objects.extend(
+                create_bbox_geometry_objects_for_frame(
+                    all_object_info[f"{frame_id:06d}.all_object_info.json"],
+                    camera_pose,
+                    camera_model,
+                    fill_face='all',
+                    fill_face_style='solid',
+                    object_type_to_per_vertex_color=bbox_per_vertex_color_map,
+                    line_width=4,
+                    edge_color=[200, 200, 200],
+                )
+            )
+
+            # Render once for this frame
+            combined_frame = render_geometries(
+                geometry_objects,
+                camera_model.height,
+                camera_model.width,
+                depth_max=200,
+                depth_gradient=True,
+            )
+            combined_frames.append(combined_frame)
+
+        combined_projection = np.stack(combined_frames, axis=0)
+
+        prepare_output(
+            combined_projection, 
+            render_frame_ids, 
+            'world_scenario', 
+            settings,
+            output_root, 
+            clip_id, 
+            camera_name, 
+            resize_resolution, 
+            cosmos_resolution, 
+            post_training,
+            camera_type
+        )
+
+
 @ray_remote(use_ray=USE_RAY, num_gpus=1, num_cpus=2)
 def render_sample_lidar(
     input_root: str,
@@ -447,12 +582,12 @@ def render_sample_rgb(
 @click.option("--output_root", '-o', type=str, required=True, help="the root folder for the output data")
 @click.option("--dataset", "-d", type=str, default="rds_hq", help="the dataset name, 'rds_hq', 'rds_hd_mv', 'waymo' or 'waymo_mv', see xxx.json in config folder")
 @click.option("--camera_type", "-c", type=str, default="ftheta", help="the type of camera model, 'pinhole' or 'ftheta'")
-@click.option("--skip", "-s", multiple=True, help="can be 'hdmap' or 'lidar'")
+@click.option("--skip", "-s", multiple=True, help="can be 'hdmap' or 'lidar' or 'world_scenario'")
 @click.option("--post_training", "-p", type=bool, default=False, help="if True, output the RGB video for post-training")
 @click.option("--novel_pose_folder", "-np", type=str, default=None, help="the folder name of the novel pose data. If provided, we will render the novel ego trajectory")
 def main(input_root, clip_id_json, output_root, dataset, camera_type, skip, post_training, novel_pose_folder):
     if skip is not None:
-        assert all(s in ['hdmap', 'lidar'] for s in skip), "skip must be in ['hdmap', 'lidar']"
+        assert all(s in ['hdmap', 'lidar', 'world_scenario'] for s in skip), "skip must be in ['hdmap', 'lidar', 'world_scenario']"
 
     # Load settings
     with open(f'config/dataset_{dataset}.json', 'r') as file:
@@ -509,6 +644,8 @@ def main(input_root, clip_id_json, output_root, dataset, camera_type, skip, post
             futures.extend([render_sample_hdmap.remote(input_root, output_root, clip_id, settings, camera_type, post_training, novel_pose_folder, resize_resolution, cosmos_resolution) for clip_id in clip_list])
         if 'lidar' not in skip:
             futures.extend([render_sample_lidar.remote(input_root, output_root, clip_id, settings, camera_type, post_training, novel_pose_folder, resize_resolution, cosmos_resolution) for clip_id in clip_list])
+        if 'world_scenario' not in skip:
+            futures.extend([render_sample_world_scenario.remote(input_root, output_root, clip_id, settings, camera_type, post_training, novel_pose_folder, resize_resolution, cosmos_resolution) for clip_id in clip_list])
         if post_training:
             futures.extend([render_sample_rgb.remote(input_root, output_root, clip_id, settings, camera_type, post_training, novel_pose_folder, resize_resolution, cosmos_resolution) for clip_id in clip_list])
         wait_for_futures(futures)
@@ -518,6 +655,8 @@ def main(input_root, clip_id_json, output_root, dataset, camera_type, skip, post
                 render_sample_hdmap(input_root, output_root, clip_id, settings, camera_type, post_training, novel_pose_folder, resize_resolution, cosmos_resolution)
             if 'lidar' not in skip:
                 render_sample_lidar(input_root, output_root, clip_id, settings, camera_type, post_training, novel_pose_folder, resize_resolution, cosmos_resolution)
+            if 'world_scenario' not in skip:
+                render_sample_world_scenario(input_root, output_root, clip_id, settings, camera_type, post_training, novel_pose_folder, resize_resolution, cosmos_resolution)
             if post_training:
                 render_sample_rgb(input_root, output_root, clip_id, settings, camera_type, post_training, novel_pose_folder, resize_resolution, cosmos_resolution)
 

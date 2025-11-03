@@ -8,20 +8,45 @@
 
 import numpy as np
 from tqdm import tqdm
-
+import json
+from pathlib import Path
 from utils.minimap_utils import cuboid3d_to_polyline
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
 from pycg import Isometry
-from termcolor import cprint
+from utils.graphics_utils import BoundingBox2D
 
-CLASS_COLORS = {
-    "Car":  [255, 0, 0],
-    "Truck": [0, 0, 255],
-    "Pedestrian": [0, 255, 0],
-    "Cyclist": [255, 255, 0],
-    "Others": [255, 255, 255],
-}
+OBJECT_CLASSES = json.load(open(Path(__file__).parent.parent / 'config' /'hdmap_color_config.json'))['bbox'].keys()
+
+def simplify_type_in_object_info(object_info):
+    if object_info['object_type'] not in OBJECT_CLASSES:
+        # labels from category v1
+        if object_info['object_type'] == "Bus":
+            object_info['object_type'] = "Truck"
+        # labels from category v1
+        elif object_info['object_type'] == 'Vehicle':
+            object_info['object_type'] = "Car"
+
+        # labels from category v2
+        elif object_info['object_type'] == "Heavy_truck" or \
+            object_info['object_type'] == "Train_or_tram_car" or \
+            object_info['object_type'] == "Trolley_bus" or \
+            object_info['object_type'] == "Trailer":
+            object_info['object_type'] = "Truck"
+        # labels from category v2
+        elif object_info['object_type'] == 'Automobile' or \
+                object_info['object_type'] == 'Other_vehicle':
+            object_info['object_type'] = "Car"
+        # labels from category v2
+        elif object_info['object_type'] == 'Person':
+            object_info['object_type'] = "Pedestrian"
+        # labels from category v2
+        elif object_info['object_type'] == 'Rider':
+            object_info['object_type'] = "Cyclist"
+        else:
+            object_info['object_type'] = "Others"
+
+    return object_info
 
 def create_bbox_projection(all_object_info, camera_poses, valid_frame_ids, camera_model):
     """
@@ -37,6 +62,7 @@ def create_bbox_projection(all_object_info, camera_poses, valid_frame_ids, camer
     Returns:
         np.ndarray, shape (N, H, W, 3), dtype=np.uint8, projected bounding boxes on canvas
     """
+    CLASS_COLORS = json.load(open(Path(__file__).parent.parent / 'config' /'hdmap_color_config.json'))['bbox']
     bbox_projections = []
 
     for i in valid_frame_ids:
@@ -54,33 +80,7 @@ def create_bbox_projection(all_object_info, camera_poses, valid_frame_ids, camer
 
         for tracking_id in tracking_ids:
             object_info = current_object_info[tracking_id]
-
-            if object_info['object_type'] not in CLASS_COLORS:
-                # labels from category v1
-                if object_info['object_type'] == "Bus":
-                    object_info['object_type'] = "Truck"
-                # labels from category v1
-                elif object_info['object_type'] == 'Vehicle':
-                    object_info['object_type'] = "Car"
-
-                # labels from category v2
-                elif object_info['object_type'] == "Heavy_truck" or \
-                   object_info['object_type'] == "Train_or_tram_car" or \
-                   object_info['object_type'] == "Trolley_bus" or \
-                   object_info['object_type'] == "Trailer":
-                    object_info['object_type'] = "Truck"
-                # labels from category v2
-                elif object_info['object_type'] == 'Automobile' or \
-                     object_info['object_type'] == 'Other_vehicle':
-                    object_info['object_type'] = "Car"
-                # labels from category v2
-                elif object_info['object_type'] == 'Person':
-                    object_info['object_type'] = "Pedestrian"
-                # labels from category v2
-                elif object_info['object_type'] == 'Rider':
-                    object_info['object_type'] = "Cyclist"
-                else:
-                    object_info['object_type'] = "Others"
+            object_info = simplify_type_in_object_info(object_info)
 
             object_to_world = np.array(object_info['object_to_world'])
             object_lwh = np.array(object_info['object_lwh'])
@@ -388,3 +388,117 @@ def object_tfm_to_heading(tfm):
     heading_vector = tfm[:3, 0]
     heading_vector = heading_vector / np.linalg.norm(heading_vector)
     return heading_vector
+
+
+
+def create_bbox_geometry_objects_for_frame(
+    current_object_info,
+    current_camera_pose,
+    camera_model,
+    fill_face='front_and_back',
+    fill_face_style='diagonal',
+    object_type_to_per_vertex_color=None,
+    line_width=9,
+    edge_color=None,
+):
+    """
+    Build BoundingBox2D geometry objects for a single frame.
+    Args:
+        current_object_info: dict, containing all object info for the current frame
+        current_camera_pose: np.ndarray, shape (4, 4), dtype=np.float32, camera pose
+        camera_model: CameraModel, camera model
+        fill_face: str, which faces to fill
+        fill_face_style: str, style of face filling
+        object_type_to_per_vertex_color: dict, mapping from object type to per-vertex color
+        color_version: str, version key for bbox colors from config_color_bbox.json
+        line_width: int, line width for rendering
+        edge_color: np.ndarray, shape (3,), dtype=np.float32, optional edge color
+
+    Returns:
+        list[BoundingBox2D], geometry objects for the current frame
+    """
+    # Prepare per-vertex colors if not supplied
+    if edge_color is not None:
+        edge_color = np.array(edge_color) / 255.0
+
+    # Store the 8 corner vertices of each object type
+    object_type_to_corner_vertices = {
+        'Car': [], 'Truck': [], 'Pedestrian': [], 'Cyclist': [], 'Others': []
+    }
+
+    tracking_ids = list(current_object_info.keys())
+    tracking_ids.sort()
+
+    for tracking_id in tracking_ids:
+        object_info = current_object_info[tracking_id]
+        object_info = simplify_type_in_object_info(object_info)
+
+        object_to_world = np.array(object_info['object_to_world'])
+        object_lwh = np.array(object_info['object_lwh'])
+        cuboid_eight_vertices = build_cuboid_bounding_box(
+            object_lwh[0], object_lwh[1], object_lwh[2], object_to_world
+        ) # (8, 3)
+
+        # Cull objects entirely behind camera
+        if np.all(np.dot(cuboid_eight_vertices - current_camera_pose[:3, 3], current_camera_pose[:3, 2]) < 0):
+            continue
+
+        if object_info['object_type'] in ['Car', 'Truck', 'Pedestrian', 'Cyclist']:
+            object_type_to_corner_vertices[object_info['object_type']].append(cuboid_eight_vertices)
+        else:
+            object_type_to_corner_vertices['Others'].append(cuboid_eight_vertices)
+
+    # draw the bbox projection. xy are pixel coordinate, depth is in meters.
+    geometry_objects = []
+    for object_type, all_corner_vertices in object_type_to_corner_vertices.items():
+        if len(all_corner_vertices) == 0:
+            continue
+
+        # all_corner_vertices is [n, 8, 3]
+        n_objects = len(all_corner_vertices)
+        all_corner_vertices_flatten = np.array(all_corner_vertices).reshape(-1, 3)
+        all_points_in_cam = camera_model.transform_points(
+            all_corner_vertices_flatten, np.linalg.inv(current_camera_pose)
+        )
+        all_depth = all_points_in_cam[:, 2:3] # (n * 8, 1)
+        all_xy = camera_model.ray2pixel(all_points_in_cam) # (n * 8, 2)
+        all_xy_and_depth = np.hstack([all_xy, all_depth]).reshape(n_objects, 8, 3) # (n, 8, 3)
+
+        # valid corner: (1) 0 <= x <= width, (2) 0 <= y <= height, (3) depth > 0
+        valid_x_mask = (all_xy_and_depth[:, :, 0] >= 0) & (all_xy_and_depth[:, :, 0] < camera_model.width)
+        valid_y_mask = (all_xy_and_depth[:, :, 1] >= 0) & (all_xy_and_depth[:, :, 1] < camera_model.height)
+        valid_depth_mask = (all_xy_and_depth[:, :, 2] > 0)
+        not_valid_vertex_mask = ~valid_x_mask | ~valid_y_mask | ~valid_depth_mask
+        not_valid_object_mask = np.all(not_valid_vertex_mask, axis=1)
+        valid_object_mask = ~not_valid_object_mask
+
+        all_xy_and_depth = all_xy_and_depth[valid_object_mask]
+
+        for xy_and_depth in all_xy_and_depth:
+            geometry_objects.append(
+                BoundingBox2D(
+                    xy_and_depth=xy_and_depth,
+                    base_color_or_per_vertex_color=object_type_to_per_vertex_color[object_type],
+                    fill_face=fill_face,
+                    fill_face_style=fill_face_style,
+                    line_width=line_width,
+                    edge_color=edge_color,
+                )
+            )
+
+    return geometry_objects
+
+
+def build_per_vertex_color_map_for_world_scenario():
+    """
+    Returns:
+        dict[str, np.ndarray(8,3)]: mapping from class name to per-vertex RGB
+    """
+    gradient_class_colors = json.load(open(Path(__file__).parent.parent / 'config' /'world_scenario_color_config.json'))['bbox']
+    object_type_to_per_vertex_color = {}
+    for object_type, colors in gradient_class_colors.items():
+        per_vertex_color = np.zeros((8, 3))
+        per_vertex_color[[0,1,4,5]] = np.array(colors[0]) / 255.0
+        per_vertex_color[[2,3,6,7]] = np.array(colors[1]) / 255.0
+        object_type_to_per_vertex_color[object_type] = per_vertex_color
+    return object_type_to_per_vertex_color

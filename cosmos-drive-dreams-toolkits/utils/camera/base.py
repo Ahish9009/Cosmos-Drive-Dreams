@@ -525,3 +525,34 @@ class CameraBase:
             draw_images = draw_images[0]
 
         return draw_images
+
+    def get_xy_and_depth(
+        self,
+        points_in_world: Union[torch.Tensor, np.ndarray],
+        camera_pose: Union[torch.Tensor, np.ndarray],
+    ) -> Union[torch.Tensor, np.ndarray]:
+        """
+        Args:
+            points_in_world: (M, 3)
+            camera_pose: (4, 4)
+        Returns:
+            xy_and_depth: (M', 3)
+        """
+        assert isinstance(points_in_world, type(camera_pose)), \
+            f"points_in_world and camera_pose must be the same type, but got {type(points_in_world)} and {type(camera_pose)}"
+
+        if isinstance(camera_pose, torch.Tensor):
+            world_to_camera = torch.linalg.inv(camera_pose)
+        else:
+            world_to_camera = np.linalg.inv(camera_pose)
+
+        points_in_cam = CameraBase.transform_points(points_in_world, world_to_camera)
+        depth = points_in_cam[:, 2:3]
+        xy = self.ray2pixel(points_in_cam)
+
+        if isinstance(points_in_world, torch.Tensor):
+            xy_and_depth = torch.cat([xy, depth.unsqueeze(-1)], dim=-1)
+        else:
+            xy_and_depth = np.concatenate([xy, depth.reshape(-1, 1)], axis=-1)
+
+        return xy_and_depth
