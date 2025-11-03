@@ -55,7 +55,7 @@ The LiDAR tokenizer enables efficient encoding and decoding of LiDAR point cloud
 | Cosmos-Tokenize1-CI8x8-360p (Image) | 1.302     | 0.450     | 0.022          |
 | Cosmos-Tokenizer-CI8x8-Lidar | 0.289     | 0.218     | 0.011          |
 
-Fine-tuning on LiDAR range map data achieves significant improvements in reconstruction accuracy.
+Fine-tuning on LiDAR range map data achieves significant improvements in reconstruction accuracy. On a single NVIDIA A100-SXM4-80GB GPU, our tokenizer runs at 1.7 fps for a processed lidar range map of shape 512 x 1800 with fp32 precision.
 
 ### Post-training LiDAR Tokenizer
 * [Post-train tokenizer using custom LiDAR datasets](examples/lidar_tokenizer.md) **[with multi-GPU support]**
@@ -65,7 +65,7 @@ Fine-tuning on LiDAR range map data achieves significant improvements in reconst
 
 ## Cosmos-Transfer-LidarGen Diffusion Model
 
-The RGB-conditioned LiDAR generation model generates LiDAR range maps from multi-view RGB images, enabling 3D spatial understanding for 2D visual data.
+The RGB-conditioned LiDAR generation model generates LiDAR range maps from multi-view RGB images, enabling 3D spatial understanding for 2D visual data. On a single NVIDIA A100-SXM4-80GB GPU, our diffusion model takes around 160 seconds to generate a single Lidar range map from multi-view images.
 
 **Model Performance:**
 We run inference on 200 samples and compute the chamfer distance between the generated lidar and the real lidar within the range of [5, 65] meters, here are some statics:

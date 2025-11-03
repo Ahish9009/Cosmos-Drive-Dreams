@@ -14,7 +14,7 @@ We open-source our **model weights**, **pipeline toolkits**, and a **dataset** (
 
 ## News
 - 2025-10-29: **World Scenario Rendering** feature added to toolkits! This enhanced rendering mode (used in [Cosmos-Transfer 2.5](https://github.com/nvidia-cosmos/cosmos-transfer2.5)) provides high-fidelity 3D geometry-based control signals with rich laneline and bounding box patterns compared to traditional HDMap rendering. See the [toolkit](https://github.com/nv-tlabs/Cosmos-Drive-Dreams/blob/main/cosmos-drive-dreams-toolkits/README.md#world-scenario-rendering-new-in-cosmos-transfer25-2bautomultiview) for details.
-- 2025-10-22: [Data preprocessing](cosmos-drive-dreams-toolkits/convert_lidar_pointcloud_to_rangemap.py), post-training and inference scripts of lidar tokenizer and diffuison [models](cosmos-transfer-lidargen/README.md) are released ! See [Huggingface](https://huggingface.co/collections/nvidia/cosmos-drive-dreams-68f5ea17febabd25282767fd) for our model cards. 
+- 2025-10-22: [Data preprocessing](cosmos-drive-dreams-toolkits/convert_lidar_pointcloud_to_rangemap.py), post-training and inference scripts of lidar tokenizer and diffuison [models](cosmos-transfer-lidargen/README.md) are released ! See [Huggingface](https://huggingface.co/collections/nvidia/cosmos-drive-dreams) for our model cards. 
 - 2025-06-10: Model, Toolkits, and Dataset (including cosmos-generated video, HDMap, and LiDAR) are released! Stay tuned for the paired GT RGB videos. 
 
 
@@ -33,7 +33,7 @@ https://github.com/user-attachments/assets/43c5b921-ef23-4d5d-8ab4-2a7a58a0cb77
 | **Cosmos-Transfer1-7B-Sample-AV** (Paper Sec. [2.2]) | model     | [Huggingface Link](https://huggingface.co/nvidia/Cosmos-Transfer1-7B-Sample-AV) |
 | **Cosmos-7B-Single2Multiview-Sample-AV** (Paper Sec. [2.3])     | model     | [Huggingface Link](https://huggingface.co/nvidia/Cosmos-Transfer1-7B-SingleToMultiView-Sample-AV) |
 | **Cosmos-7B-Annotate-Sample-AV** (Paper Sec. [2.4])        | model     | To be released soon |
-| **Cosmos-7B-LiDAR-GEN-Sample-AV** (Paper Sec. [3])         | model     | [Huggingface link](https://huggingface.co/collections/nvidia/cosmos-drive-dreams-68f5ea17febabd25282767fd) |
+| **Cosmos-7B-LiDAR-GEN-Sample-AV** (Paper Sec. [3])         | model     | [Huggingface link](https://huggingface.co/collections/nvidia/cosmos-drive-dreams) |
 <!---
 | **Cosmos Toolkit**                | SDG tool   | [Cosmos Drive Dreams Toolkits](https://github.com/nv-tlabs/Cosmos-Drive-Dreams/tree/main/cosmos-drive-dreams-toolkits) |
 | **RDS-HQ Dataset Subset**        | dataset    | [Huggingface Dataset](https://huggingface.co/datasets/nvidia/PhysicalAI-Autonomous-Vehicle-Cosmos-Drive-Dreams) |
