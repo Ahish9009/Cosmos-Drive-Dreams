@@ -21,8 +21,6 @@ import re
 from einops import rearrange
 from matplotlib import cm
 import mediapy as media
-import ncore.impl.common.common as ncore_common
-import ncore.impl.common.transformations as ncore_transformations
 import matplotlib.pyplot as plt
 from cosmos_predict1.utils.camera.ftheta import FThetaCamera
 from cosmos_predict1.utils.misc import make_sure_numpy, make_sure_torch
@@ -273,6 +271,9 @@ def apply_motion_compensation_impl(
     Out:
         (np.array): points after undo motion-compensation[n,3]
     """
+    import ncore.impl.common.common as ncore_common
+    import ncore.impl.common.transformations as ncore_transformations
+    
     xyz = make_sure_numpy(xyz)
     T_sensor_end_sensor_start = make_sure_numpy(T_sensor_end_sensor_start)
     timestamp_us = make_sure_numpy(timestamp_us)

@@ -8,12 +8,15 @@ Please refer to the Inference section of [INSTALL.md](/INSTALL.md#inference) for
 # required for plotly
 apt-get -y install libnss3 libatk-bridge2.0-0 libcups2 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libxkbcommon0 libpango-1.0-0 libcairo2
 plotly_get_chrome
-# ncore dependency, this is for Nvidia internal only
-export YOUR_TOKEN=xxxx
-pip install ncore --extra-index-url https://__token__:${YOUR_TOKEN}@gitlab-master.nvidia.com/api/v4/projects/61004/packages/pypi/simple
 # additional libs
 pip install jaxtyping kaleido pyquaternion av lru-dict OpenEXR==3.2.3 plotly open3d
 ```
+We use Nvidia ncore library for motion compensation of the generated lidar data, if you have access to it, please run
+```bash
+export YOUR_TOKEN=xxxx
+pip install ncore --extra-index-url https://__token__:${YOUR_TOKEN}@gitlab-master.nvidia.com/api/v4/projects/61004/packages/pypi/simple
+```
+You can still run the tokenizer and diffusion model inference without this dependency. However, if ncore is not installed, motion compensation will be skipped, resulting in a less accurate LiDAR point cloud.
 
 ### Model Support Matrix
 

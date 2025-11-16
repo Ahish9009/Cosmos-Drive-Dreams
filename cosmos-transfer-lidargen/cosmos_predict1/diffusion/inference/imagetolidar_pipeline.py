@@ -37,7 +37,17 @@ from cosmos_predict1.diffusion.training.module.pretrained_vae import VideoTokeni
 
 
 from cosmos_predict1.utils.visualize.point_cloud import render_range_map_to_point_cloud
-from cosmos_predict1.utils.lidar_rangemap import undo_row_col_temporal_repeat, unnormalize_and_reduce_channels, range_map_to_point_cloud, colorcode_depth_maps, project_lidar_to_rgb_impl, apply_motion_compensation_impl
+from cosmos_predict1.utils.lidar_rangemap import undo_row_col_temporal_repeat, unnormalize_and_reduce_channels, range_map_to_point_cloud, colorcode_depth_maps, project_lidar_to_rgb_impl
+
+try:
+    import ncore.impl.common.common as ncore_common
+    import ncore.impl.common.transformations as ncore_transformations
+    USE_NCORE = True
+    from cosmos_predict1.utils.lidar_rangemap import apply_motion_compensation_impl
+except ImportError:
+    USE_NCORE = False
+    print("ncore is not installed, motion compensation will not be available")
+
 
 def merge_images_vertically(image_paths, output_path):
     """
@@ -378,14 +388,6 @@ class RGB2LidarInference:
             save_list.append(local_path.replace(".jpg", "_pointcloud.jpg"))
 
         return save_list
-    
-    def save_compensated_lidar(self, data_batch, dset_name, base_fp_wo_ext, save_folder, lidar_to_show, n_cols=1800, column_shift=4, batch_index=0, frame_index=0):
-        input_points_compensated, recon_points_compensated = self.get_motion_compensated_points(data_batch, lidar_to_show, dset_name, batch_index, frame_index, n_cols, column_shift)
-        # save them to numpy, with correct file name
-        clip_name = data_batch["__key__"][batch_index]
-        frame_indice = data_batch['rgb_frame_indices'][batch_index][frame_index]
-        save_path = os.path.join(save_folder, f"{base_fp_wo_ext}_{clip_name}_{frame_indice}")
-        np.savez(save_path, input_points_compensated=input_points_compensated, recon_points_compensated=recon_points_compensated)
 
     def sample(self, dset_name, save_folder, data_batch, c_iter_idx):
         """Generate samples from the model"""
@@ -429,11 +431,11 @@ class RGB2LidarInference:
         lidar_vis = self.save_vis(data_batch, lidar_to_show, save_folder, base_fp_wo_ext+"_lidar", dset_name, False, data_type="lidar")
 
         # project lidar to rgb
-        overlay_path = self.project_lidar_to_rgb(data_batch, save_folder, dset_name, base_fp_wo_ext, lidar_to_show, rgb_gen.float(), batch_index=0)
-        input_files = [overlay_path, lidar_vis[0], lidar_vis[1]]
-        
-        # save the point cloud as well
-        self.save_compensated_lidar(data_batch, dset_name, base_fp_wo_ext, save_folder, lidar_to_show, batch_index=0, frame_index=0)
+        if USE_NCORE:
+            overlay_path = self.project_lidar_to_rgb(data_batch, save_folder, dset_name, base_fp_wo_ext, lidar_to_show, rgb_gen.float(), batch_index=0)
+            input_files = [overlay_path, lidar_vis[0], lidar_vis[1]]
+        else:
+            input_files = [lidar_vis[0], lidar_vis[1]]
 
         batch_index = 0
         clip_name = data_batch["__key__"][batch_index]
