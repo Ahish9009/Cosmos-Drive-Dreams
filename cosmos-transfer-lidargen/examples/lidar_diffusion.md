@@ -102,7 +102,7 @@ The Cosmos-Transfer-LidarGen model can generate LiDAR range maps from multi-view
 # Basic inference with ImageToLidar model
 n_gpus=1
 experiment=text2world_imagetolidar
-ckpt_path=checkpoints/osmos-Transfer-LidarGen/model.pt
+ckpt_path=checkpoints/Cosmos-Transfer-LidarGen/model.pt
 
 torchrun --master_port=29502 --nproc_per_node=$n_gpus cosmos_predict1/diffusion/inference/imagetolidar_cli.py \
     --save_dir dump_results/test_image2lidar_inference \
@@ -120,7 +120,7 @@ For faster inference with multiple GPUs:
 ```bash
 n_gpus=8
 experiment=text2world_imagetolidar
-ckpt_path=checkpoints/ImageToLidar/model.pt
+ckpt_path=checkpoints/Cosmos-Transfer-LidarGen/model.pt
 
 torchrun --master_port=29502 --nproc_per_node=$n_gpus cosmos_predict1/diffusion/inference/imagetolidar_cli.py \
     --save_dir dump_results/test_image2lidar_inference_4gpu \
@@ -152,6 +152,12 @@ The Cosmos-Transfer-LidarGen diffusion model is built on the following architect
 
 
 ##  Troubleshooting
+- **Conda setup**
+  - If you happen to use our conda setup, please add the following lines before running python
+    ```bash
+    CUDA_HOME=$CONDA_PREFIX
+    PYTHONPATH=$(pwd)
+    ```
 
 - **Memory Issues**: 
   - Ensure sufficient GPU memory (recommend 80GB+ per GPU)

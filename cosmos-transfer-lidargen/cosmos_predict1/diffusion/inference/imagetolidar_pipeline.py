@@ -39,15 +39,6 @@ from cosmos_predict1.diffusion.training.module.pretrained_vae import VideoTokeni
 from cosmos_predict1.utils.visualize.point_cloud import render_range_map_to_point_cloud
 from cosmos_predict1.utils.lidar_rangemap import undo_row_col_temporal_repeat, unnormalize_and_reduce_channels, range_map_to_point_cloud, colorcode_depth_maps, project_lidar_to_rgb_impl
 
-try:
-    import ncore.impl.common.common as ncore_common
-    import ncore.impl.common.transformations as ncore_transformations
-    USE_NCORE = True
-    from cosmos_predict1.utils.lidar_rangemap import apply_motion_compensation_impl
-except ImportError:
-    USE_NCORE = False
-    print("ncore is not installed, motion compensation will not be available")
-
 
 def merge_images_vertically(image_paths, output_path):
     """
@@ -431,11 +422,9 @@ class RGB2LidarInference:
         lidar_vis = self.save_vis(data_batch, lidar_to_show, save_folder, base_fp_wo_ext+"_lidar", dset_name, False, data_type="lidar")
 
         # project lidar to rgb
-        if USE_NCORE:
-            overlay_path = self.project_lidar_to_rgb(data_batch, save_folder, dset_name, base_fp_wo_ext, lidar_to_show, rgb_gen.float(), batch_index=0)
-            input_files = [overlay_path, lidar_vis[0], lidar_vis[1]]
-        else:
-            input_files = [lidar_vis[0], lidar_vis[1]]
+        overlay_path = self.project_lidar_to_rgb(data_batch, save_folder, dset_name, base_fp_wo_ext, lidar_to_show, rgb_gen.float(), batch_index=0)
+        input_files = [overlay_path, lidar_vis[0], lidar_vis[1]]
+
 
         batch_index = 0
         clip_name = data_batch["__key__"][batch_index]

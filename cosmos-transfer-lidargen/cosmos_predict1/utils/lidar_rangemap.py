@@ -23,7 +23,75 @@ from matplotlib import cm
 import mediapy as media
 import matplotlib.pyplot as plt
 from cosmos_predict1.utils.camera.ftheta import FThetaCamera
-from cosmos_predict1.utils.misc import make_sure_numpy, make_sure_torch
+from cosmos_predict1.utils.misc import make_sure_numpy
+from scipy import spatial, interpolate
+from scipy.spatial.transform import Rotation as R
+
+def transform_point_cloud(pc, T):
+    """Transform the point cloud with the provided transformation matrix,
+        support torch.Tensor and np.ndarry.
+    Args:
+        pc (np.array): point cloud coordinates (x,y,z) [num_pts, 3] or [bs, num_pts, 3]
+        T (np.array): se3 transformation matrix  [4, 4] or [bs, 4, 4]
+
+    Out:
+        (np array): transformed point cloud coordinated [num_pts, 3] or [bs, num_pts, 3]
+    """
+    if len(pc.shape) == 3:
+        if isinstance(pc, np.ndarray):
+            trans_pts = T[:, :3, :3] @ pc.transpose(0, 2, 1) + T[:, :3, 3:4]
+            return trans_pts.transpose(0, 2, 1)
+        else:
+            trans_pts = T[:, :3, :3] @ pc.permute(0, 2, 1) + T[:, :3, 3:4]
+            return trans_pts.permute(0, 2, 1)
+
+    else:
+        trans_pts = T[:3, :3] @ pc.transpose() + T[:3, 3:4]
+        return trans_pts.transpose()
+
+class PoseInterpolator:
+    """
+    Interpolates the poses to the desired time stamps. The translation component is interpolated linearly,
+    while spherical linear interpolation (SLERP) is used for the rotations. https://en.wikipedia.org/wiki/Slerp
+
+    Args:
+        poses (np.array): poses at given timestamps in a se3 representation [n,4,4]
+        timestamps (np.array): timestamps of the known poses [n]
+        ts_target (np.array): timestamps for which the poses will be interpolated [m]
+    Out:
+        (np.array): interpolated poses in se3 representation [m,4,4]
+    """
+
+    def __init__(self, poses, timestamps):
+        self.slerp = spatial.transform.Slerp(timestamps, R.from_matrix(poses[:, :3, :3]))
+        self.f_x = interpolate.interp1d(timestamps, poses[:, 0, 3])
+        self.f_y = interpolate.interp1d(timestamps, poses[:, 1, 3])
+        self.f_z = interpolate.interp1d(timestamps, poses[:, 2, 3])
+
+        self.last_row = np.array([0, 0, 0, 1], dtype=np.float32).reshape(1, 1, -1)
+
+        self.start_timestamp = timestamps[0]
+        self.end_timestamp = timestamps[-1]
+
+    def in_range(self, ts) -> bool:
+        """Returns true if all provided timestamps (scalar or array-like) are within the interpolation range"""
+        return (
+            np.logical_and(self.start_timestamp <= (ts_array := np.asarray(ts)), ts_array <= self.end_timestamp)
+            .all()
+            .item()
+        )
+
+    def interpolate_to_timestamps(self, ts_target):
+        x_interp = self.f_x(ts_target).reshape(-1, 1, 1).astype(np.float32)
+        y_interp = self.f_y(ts_target).reshape(-1, 1, 1).astype(np.float32)
+        z_interp = self.f_z(ts_target).reshape(-1, 1, 1).astype(np.float32)
+        R_interp = self.slerp(ts_target).as_matrix().reshape(-1, 3, 3).astype(np.float32)
+
+        t_interp = np.concatenate([x_interp, y_interp, z_interp], axis=-2)
+
+        return np.concatenate(
+            (np.concatenate([R_interp, t_interp], axis=-1), np.tile(self.last_row, (R_interp.shape[0], 1, 1))), axis=1
+        )
 
 def load_each_frame_from_tar_data(tar_data, frame_idx, n_rows=128, n_cols=3600):
     """
@@ -271,15 +339,13 @@ def apply_motion_compensation_impl(
     Out:
         (np.array): points after undo motion-compensation[n,3]
     """
-    import ncore.impl.common.common as ncore_common
-    import ncore.impl.common.transformations as ncore_transformations
     
     xyz = make_sure_numpy(xyz)
     T_sensor_end_sensor_start = make_sure_numpy(T_sensor_end_sensor_start)
     timestamp_us = make_sure_numpy(timestamp_us)
 
     # )
-    pose_interpolator = ncore_common.PoseInterpolator(
+    pose_interpolator = PoseInterpolator(
         np.stack([np.eye(4, dtype=np.float32),np.linalg.inv(T_sensor_end_sensor_start)]),
         timestamps_startend_us,
     )
@@ -290,7 +356,7 @@ def apply_motion_compensation_impl(
     ), f"Lidar point timestamps out of frame timestamp bounds - this is an inconsistency in the dataset's internal data and needs to be fixed at dataset creation time"
     T_sensor_end_sensor_pointtime = pose_interpolator.interpolate_to_timestamps(timestamp_us)
 
-    xyz = ncore_transformations.transform_point_cloud(xyz[:, np.newaxis, :], T_sensor_end_sensor_pointtime).squeeze(1)
+    xyz = transform_point_cloud(xyz[:, np.newaxis, :], T_sensor_end_sensor_pointtime).squeeze(1)
 
     return xyz
 

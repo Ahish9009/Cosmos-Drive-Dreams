@@ -11,12 +11,12 @@ plotly_get_chrome
 # additional libs
 pip install jaxtyping kaleido pyquaternion av lru-dict OpenEXR==3.2.3 plotly open3d
 ```
-We use Nvidia ncore library for motion compensation of the generated lidar data, if you have access to it, please run
+We use Nvidia ncore library to preprocess (mostly for sensor and motion compensation handling) our internal Lidar data, if you have access to it, please run
 ```bash
 export YOUR_TOKEN=xxxx
 pip install ncore --extra-index-url https://__token__:${YOUR_TOKEN}@gitlab-master.nvidia.com/api/v4/projects/61004/packages/pypi/simple
 ```
-You can still run the tokenizer and diffusion model inference without this dependency. However, if ncore is not installed, motion compensation will be skipped, resulting in a less accurate LiDAR point cloud.
+Please note that you **don't** need this dependency to run the tokenizer and diffusion model training and inference if you already have your own data processed. 
 
 ### Model Support Matrix
 
